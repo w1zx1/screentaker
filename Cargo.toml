@@ -1,0 +1,9 @@
+[package]
+name = "screentaker"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+x11rb = { version = "0.13", features = ["present", "sync", "dri3", "cursor"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+libc = "0.2"
