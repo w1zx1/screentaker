@@ -1,6 +1,6 @@
 # screentaker
 
-a lightweight and reliable screenshooter written in Rust
+a lightweight and reliable screenshooter for X11 written in Rust
 
 ### warning
 
