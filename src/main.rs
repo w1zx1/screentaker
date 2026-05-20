@@ -143,17 +143,40 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     conn.flush()?;
 
-    let mut region_buf: Vec<u8> = Vec::new();
-
     struct Sel {
         active: bool,
         x1: i16, y1: i16, x2: i16, y2: i16,
-        prev: Option<(i16, i16, i16, i16)>,
     }
-    let mut s = Sel { active: false, x1: 0, y1: 0, x2: 0, y2: 0, prev: None };
+    let mut s = Sel { active: false, x1: 0, y1: 0, x2: 0, y2: 0 };
 
     loop {
-        let event = conn.wait_for_event()?;
+        let event = if s.active {
+            // During selection: polling without blocking
+            if let Some(e) = conn.poll_for_event()? {
+                Some(e)
+            } else {
+                // If no events, redraw current selection
+                let (rx, ry, rw, rh) = norm(s.x1, s.y1, s.x2, s.y2);
+                if rw > 0 && rh > 0 {
+                    let mut frame = dark.clone();
+                    for row in ry as usize..(ry + rh as i16) as usize {
+                        let off = row * stride + rx as usize * bpp;
+                        let len = rw as usize * bpp;
+                        frame[off..off + len].copy_from_slice(&original[off..off + len]);
+                    }
+                    let _ = put_image(&conn, ImageFormat::Z_PIXMAP, win, gc, w, h, 0, 0, 0, depth, &frame);
+                    let _ = conn.flush();
+                }
+                None
+            }
+        } else {
+            Some(conn.wait_for_event()?)
+        };
+        
+        let event = match event {
+            Some(e) => e,
+            None => continue,
+        };
         match event {
             Event::Expose(_) => {
                 let mut frame = dark.clone();
@@ -173,46 +196,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             Event::ButtonPress(ev) => {
                 if ev.detail != 1 { continue; }
-                s = Sel { active: true, x1: ev.event_x, y1: ev.event_y, x2: ev.event_x, y2: ev.event_y, prev: None };
+                s = Sel { active: true, x1: ev.event_x, y1: ev.event_y, x2: ev.event_x, y2: ev.event_y };
             }
             Event::MotionNotify(ev) => {
                 if !s.active { continue; }
                 s.x2 = ev.event_x;
                 s.y2 = ev.event_y;
-                if s.prev == Some((s.x1, s.y1, s.x2, s.y2)) { continue; }
-
-                let nr = norm(s.x1, s.y1, s.x2, s.y2);
-                let (ux, uy, uw, uh) = match s.prev {
-                    Some(p) => union(nr, norm(p.0, p.1, p.2, p.3)),
-                    None => nr,
-                };
-                if uw == 0 || uh == 0 { continue; }
-
-                let uw_us = uw as usize;
-                let uh_us = uh as usize;
-                let u_stride = uw_us * bpp;
-                region_buf.resize(uh_us * u_stride, 0);
-
-                for row in 0..uh_us {
-                    let src = (uy as usize + row) * stride + ux as usize * bpp;
-                    let dst = row * u_stride;
-                    region_buf[dst..dst + u_stride].copy_from_slice(&dark[src..src + u_stride]);
-                }
-
-                let (rx, ry, rw, rh) = nr;
-                if rw > 0 && rh > 0 {
-                    for row in 0..rh as usize {
-                        let src = (ry as usize + row) * stride + rx as usize * bpp;
-                        let dst = (ry as usize - uy as usize + row) * u_stride + (rx as usize - ux as usize) * bpp;
-                        let len = rw as usize * bpp;
-                        region_buf[dst..dst + len].copy_from_slice(&original[src..src + len]);
-                    }
-                    //border(&mut region_buf, u_stride,
-                    //    rx - ux, ry - uy, rw, rh, bpp, r_off, g_off, b_off);
-                }
-
-                put_image(&conn, ImageFormat::Z_PIXMAP, win, gc, uw, uh, ux, uy, 0, depth, &region_buf)?;
-                s.prev = Some((s.x1, s.y1, s.x2, s.y2));
             }
             Event::ButtonRelease(ev) => {
                 if ev.detail != 1 { continue; }
@@ -250,6 +239,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                 .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "no stdin"))
                                 .and_then(|stdin| std::io::Write::write_all(stdin, &png_bytes).map_err(Into::into))
                         });
+                    
+                    let _ = std::process::Command::new("notify-send")
+                        .args(["Screenshot saved", &format!("{}×{} pixels copied to clipboard", rw, rh)])
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn();
+                } else {
+                    let _ = std::process::Command::new("notify-send")
+                        .args(["Screenshot cancelled", "No selection made"])
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn();
                 }
                 break;
             }
@@ -271,14 +272,6 @@ fn norm(x1: i16, y1: i16, x2: i16, y2: i16) -> (i16, i16, u16, u16) {
     let w = (x1 - x2).unsigned_abs();
     let h = (y1 - y2).unsigned_abs();
     (x, y, w, h)
-}
-
-fn union(a: (i16, i16, u16, u16), b: (i16, i16, u16, u16)) -> (i16, i16, u16, u16) {
-    let x = a.0.min(b.0) as i32;
-    let y = a.1.min(b.1) as i32;
-    let ex = (a.0 as i32 + a.2 as i32).max(b.0 as i32 + b.2 as i32);
-    let ey = (a.1 as i32 + a.3 as i32).max(b.1 as i32 + b.3 as i32);
-    (x as i16, y as i16, (ex - x) as u16, (ey - y) as u16)
 }
 
 #[allow(dead_code)]
