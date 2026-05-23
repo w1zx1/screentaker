@@ -73,6 +73,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             ),
     )?.check()?;
 
+    let opacity_atom = intern_atom(&conn, false, b"_NET_WM_WINDOW_OPACITY")?.reply()?.atom;
+    change_property(
+        &conn,
+        PropMode::REPLACE,
+        win,
+        opacity_atom,
+        AtomEnum::CARDINAL,
+        32,
+        1,
+        &0xfffffffe_u32.to_ne_bytes(),
+    )?.check()?;
+
     let gc = conn.generate_id()?;
     create_gc(&conn, gc, win, &CreateGCAux::default())?.check()?;
 
