@@ -8,7 +8,7 @@ a lightweight and reliable screenshooter for X11 written in Rust
 
 ## installation
 
-### from aur
+### from aur (stable version)
 
 using your aur manager:
 
@@ -27,6 +27,8 @@ makepkg -si
 ### building from source
 
 ```
+https://github.com/w1zx1/screentaker.git
+cd screentaker
 cargo build --release
 ```
 
