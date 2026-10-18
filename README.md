@@ -1,10 +1,12 @@
 # screentaker
 
-a lightweight and reliable screenshooter for X11 written in Rust
+a lightweight and reliable screenshooter for Linux written in Rust
 
-### warning
-
-**this screenshoot tool is still in alpha state**
+> [!WARNING]
+> **X11 support is legacy and no longer tested.**
+>
+> use **Wayland** — tested on KDE Plasma (KWin), selected automatically via
+> `$WAYLAND_DISPLAY` / `$DISPLAY`.
 
 ## installation
 
@@ -24,7 +26,7 @@ cd screentaker
 makepkg -si
 ```
 
-### building from source
+### build from source
 
 ```
 https://github.com/w1zx1/screentaker.git
@@ -41,6 +43,9 @@ screentaker
 - **click & drag** to select a region
 - **release** to capture (copies to clipboard as image/png)
 - press **Esc** to cancel
+
+on KDE the shot lands in the clipboard history as an image with a thumbnail
+(Meta+V), the same way Spectacle's copies do.
 
 ## license
 
