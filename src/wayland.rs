@@ -110,6 +110,11 @@ struct Out {
     ovbufs: Option<[WlBuffer; 2]>,
     busy: [bool; 2],
     front: usize,
+    // rows painted by the previous redraw; a buffer being (re)used is stale for
+    // exactly the changes since its last show, i.e. the previous band plus the
+    // current one. Repainting both keeps every buffer fully correct, which the
+    // compositor's per-buffer cache of damaged rows then mirrors exactly.
+    prev: Option<(u32, u32)>,
     band: Option<(u32, u32)>, // dirty logical rows (local)
     dirty: bool,
     surface: Option<WlSurface>,
@@ -128,6 +133,7 @@ impl Out {
             ovbufs: None,
             busy: [false; 2],
             front: 0,
+            prev: None,
             band: None,
             dirty: false,
             surface: None,
@@ -321,10 +327,20 @@ impl State {
         else {
             return;
         };
-        let front = o.front;
-        let pick = if !o.busy[front ^ 1] { front ^ 1 } else if !o.busy[front] { front } else { return };
+        let pick = o.front ^ 1;
+        if o.busy[pick] {
+            return; // the compositor still reads the only buffer safe to touch
+        }
         let stride = lw as usize * 4;
-        let (y0, y1) = if let Some((a, b)) = o.band { (a.min(b), a.max(b)) } else { (0, lh) };
+        let (b0, b1) = if let Some((a, b)) = o.band { (a.min(b), a.max(b)) } else { (0, lh) };
+        // the reused buffer is stale for everything that changed since its last
+        // show: this band plus the previous one; repaint that union so the buffer
+        // is whole again (see `prev`).
+        let (y0, y1) = if let Some((a, b)) = o.prev {
+            (b0.min(a.min(b)), b1.max(a.max(b)))
+        } else {
+            (b0, b1)
+        };
         let (ox, oy) = o.pos;
         let (coffx, coffy) = o.coff;
         let sel = self.sel;
@@ -370,6 +386,7 @@ impl State {
         let o = &mut self.outputs[i];
         o.busy[pick] = true;
         o.front = pick;
+        o.prev = Some((b0, b1));
         o.band = None;
         o.dirty = false;
         surface.damage_buffer(0, y0 as i32, lw as i32, (y1 - y0) as i32);
@@ -422,6 +439,7 @@ impl State {
         let total = dark.len() * 2;
         let mut mem = ShmMem::alloc(total)?;
         mem.bytes_mut()[..dark.len()].copy_from_slice(&dark);
+        mem.bytes_mut()[dark.len()..].copy_from_slice(&dark);
 
         let pool = self.shm.as_ref().unwrap().create_pool(mem.fd.as_fd(), total as i32, qh, ());
         let stride = lw as usize * 4;
@@ -434,6 +452,7 @@ impl State {
         o.ovbufs = Some([b0, b1]);
         o.busy = [false, false];
         o.front = 0;
+        o.prev = None;
         o.band = None;
         o.dirty = true; // initial full paint happens through redraw()
         Ok(())
